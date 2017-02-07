@@ -1,0 +1,224 @@
+---
+title: "Efficient, Consistent and Flexible Credit Default Simulation: TRNG & RcppParallel"
+author:
+  - Riccardo Porreca
+  - Roland Schmid
+output:
+  html_document:
+    includes:
+      in_header: includes/header.html
+      after_body: includes/footer.html
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, collapse = TRUE)
+```
+
+### Packages and sources
+```{r codebase, results="hide", message=FALSE}
+if (!require(rTRNG)) {
+  devtools::install_github("miraisolutions/rTRNG")
+  library(rTRNG)
+}
+if (!require(dplyr)) { # portfolio manipulation
+  install.packages("dplyr")
+  library(dplyr)
+}
+Rcpp::sourceCpp("code/simulationKernel.cpp") # rTRNG/RcppParallel C++ code
+source("code/simulationKernel.R") # R wrapper
+source("code/ES99.R") # utility for Expected Shortfall 99% calculation
+```
+
+
+### Data load
+```{r data}
+# load pf, r, Z
+loaded <- load("data/inputDataSmall.RData")
+#loaded <- load("data/inputDataBig.RData")
+loaded
+stopifnot(all(c("pf", "r", "Z") %in% loaded))
+J <- nrow(pf)
+M <- nrow(Z)
+stopifnot(ncol(Z) == J)
+stopifnot(all(dim(Z) == dim(r)))
+colnames(pf)
+dim(Z) %>% setNames(c("M", "J"))
+# number of idiosyncratic returns to be simulated for each market scenario
+K <- 100
+# random seed
+s <- 12358
+# timer for the net simulation time in simulationKernel
+timer <- function(...) {
+  system.time(...)["elapsed"]
+}
+```
+
+### Full simulation by rating
+```{r full}
+L_rtng <- simulationKernel(pf, Z, r, J, K, agg = pf$rtng, seed = s,
+                           timer = timer)
+ES99_rtng <- ES99(L_rtng)
+sort(ES99_rtng, decreasing = TRUE)
+```
+
+### Consistent simulation of the BBB sub-portfolio
+```{r BBB}
+L_BBB <- simulationKernel(pf %>% filter(rtng == "BBB"), Z, r, J, K, seed = s,
+                          timer = timer)
+all.equal(c(L_BBB), L_rtng[, "BBB"], check.attributes = FALSE)
+ES99_BBB <- ES99(L_BBB)
+ES99_BBB
+```
+
+### Contribution of individual counterparties to the BBB total ES99
+```{r BBBcontr}
+pfBBB <- pf %>% filter(rtng == "BBB")
+L_jBBBtail <- simulationKernel(pfBBB, Z, r, J, K, 
+                               agg = pfBBB$j, mk = tail99(L_BBB), seed = s,
+                               timer = timer)
+ContrES99_jBBB <- colMeans(L_jBBBtail)
+head(ContrES99_jBBB)
+all.equal(sum(ContrES99_jBBB), ES99_BBB, check.attributes = FALSE)
+```
+
+### Full distribution for the top 3 BBB counterparties (by highest contribution)
+```{r BBBtop3}
+top3jBBB <- names(sort(ContrES99_jBBB, decreasing = TRUE))[1:3]
+pftop3BBB <- pfBBB %>% filter(j %in% top3jBBB) 
+L_top3BBB <- simulationKernel(pftop3BBB, Z, r, J, K, 
+                              agg = pftop3BBB$j, seed = s,
+                              timer = timer)
+ES99_top3BBB <- ES99(L_top3BBB)
+pftop3BBB %>% 
+  select(j, V0, R) %>%
+  mutate(ES99 = ES99_top3BBB, ContrES99 = ContrES99_jBBB[top3jBBB],
+         Div = ContrES99/ES99, "Contr/V0" = ContrES99/V0)
+```
+
+### What-if scenario: top 3 BBB counterparties downgraded (higher PD)
+```{r BBBtop3wiL}
+pfBBBwi <- pf %>% filter(rtng == "BBB") %>%
+  mutate(PD = replace(PD, j %in% top3jBBB, 0.01))
+pftop3BBBwi <- pfBBBwi %>% filter(j %in% top3jBBB)
+L_top3BBBwi <- simulationKernel(pftop3BBBwi, Z, r, J, K, 
+                                agg = pftop3BBBwi$j, seed = s,
+                                timer = timer)
+```
+
+### What-if scenario: impact on the BBB ES99
+```{r BBBtop3wiES}
+L_BBBwi <- L_BBB + (rowSums(L_top3BBBwi) - rowSums(L_top3BBB))
+ES99_BBBwi <- ES99(L_BBBwi)
+cbind(ES99_BBBwi, ES99_BBB)
+```
+
+### What-if scenario: new contributions
+```{r BBBtop3wiContr}
+L_jBBBtailwi <- simulationKernel(pfBBBwi, Z, r, J, K, 
+                                 agg = pfBBB$j, mk = tail99(L_BBBwi), seed = s,
+                                 timer = timer)
+ContrES99_jBBBwi <- colMeans(L_jBBBtailwi)
+```
+
+
+### Benchmarks
+```{r benchSetup, results="hide", message=FALSE}
+if (!(require(microbenchmark))) {
+  install.packages("microbenchmark")
+  library(microbenchmark)
+}
+# reduce to a reasonable size for benchmarking
+M <- pmin(1000, M)
+J <- pmin(600, J)
+K <- pmin(10, K)
+Z <- Z[1:M, 1:J]
+r <- r[1:M, 1:J]
+pf <- pf[1:J, ]
+# number of repetitions
+nBench <- 1
+
+```
+
+#### Number of threads
+```{r benchThreads}
+withThreadNr <- function(numThreads) {
+  RcppParallel::setThreadOptions(numThreads = numThreads)
+  invisible(simulationKernel(pf, Z, r, J, K, seed = s))
+}
+mb <- microbenchmark(withThreadNr(1),
+                     withThreadNr(2),
+                     withThreadNr(4),
+                     times = nBench)
+boxplot(mb, unit = "s")
+```
+
+#### Size of the sub-portfolio
+```{r benchJ}
+set.seed(85321)
+subJ <- ceiling(J/2^(0:4))
+# sub-portfolios with constant PD (in order not to bias the benchmark)
+subpfs <-
+  lapply(as.list(subJ), 
+         function(jlen, pf) {
+           pf %>% sample_n(jlen)
+         },
+         pf %>% mutate(PD = mean(PD))) %>% setNames(subJ)
+RcppParallel::setThreadOptions(numThreads = 1)
+withSubJ <- function(subJ) {
+  invisible(simulationKernel(subpfs[[as.character(ceiling(subJ))]], 
+                             Z, r, J, K, seed = s))
+}
+mb <- microbenchmark(withSubJ(J/2^0),
+                     withSubJ(J/2^1),
+                     withSubJ(J/2^2),
+                     withSubJ(J/2^3),
+                     withSubJ(J/2^4),
+                     times = nBench)
+boxplot(mb, unit = "s")
+```
+
+#### Number of sub-simulations
+```{r benchMK}
+set.seed(85321)
+mklen <- ceiling(M*K/2^(0:4))
+mks <- 
+  lapply(mklen,function(s) {
+    sort(sample.int(M*K, s))
+  }) %>% setNames(mklen)
+RcppParallel::setThreadOptions(numThreads = 1)
+withSubMK <- function(mkl) {
+  invisible(simulationKernel(pf, Z, r, J, K, seed = s,
+                             mk = mks[[as.character(ceiling(mkl))]]))
+}
+mb <- microbenchmark(withSubMK(M*K/2^0),
+                     withSubMK(M*K/2^1),
+                     withSubMK(M*K/2^2),
+                     withSubMK(M*K/2^3),
+                     withSubMK(M*K/2^4),
+                     times = nBench)
+boxplot(mb, unit = "s")
+```
+
+### Source code
+
+#### simulationKernel.R
+```{r echo=FALSE}
+knitr::read_chunk("code/simulationKernel.R", from = 1, labels = "simKernelR")
+```
+```{r simKernelR, eval=FALSE}
+```
+
+#### ES99.R
+```{r echo=FALSE}
+knitr::read_chunk("code/ES99.R", from = 1, labels = "ES99")
+```
+```{r ES99, eval=FALSE}
+```
+
+#### simulationKernel.cpp
+```{r echo=FALSE}
+knitr::read_chunk("code/simulationKernel.cpp", from = 1, labels = "simKernelCpp")
+```
+```{Rcpp simKernelCpp, eval=FALSE}
+```
+
