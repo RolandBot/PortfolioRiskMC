@@ -17,7 +17,8 @@ knitr::opts_chunk$set(echo = TRUE, collapse = TRUE)
 ### Packages and sources
 ```{r codebase, results="hide", message=FALSE}
 if (!require(rTRNG)) {
-  devtools::install_github("miraisolutions/rTRNG")
+  devtools::install_github("miraisolutions/rTRNG",
+                           dependencies = TRUE)
   library(rTRNG)
 }
 if (!require(dplyr)) { # portfolio manipulation
