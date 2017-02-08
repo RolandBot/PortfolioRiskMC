@@ -39,7 +39,7 @@ source("code/ES99.R") # utility for Expected Shortfall 99% calculation
 ```{r data}
 # load pf, r, Z
 loaded <- load("data/inputDataSmall.RData")
-#loaded <- load("data/inputDataBig.RData")
+# loaded <- load("data/__inputDataBig.RData")
 loaded
 stopifnot(all(c("pf", "r", "Z") %in% loaded))
 J <- nrow(pf)
