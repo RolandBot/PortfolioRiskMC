@@ -17,15 +17,18 @@ knitr::opts_chunk$set(echo = TRUE, collapse = TRUE)
 
 ### Packages and sources
 ```{r codebase, results="hide", message=FALSE}
+library(dplyr) # portfolio manipulation
+# install.packages("dplyr")
+library(microbenchmark) # benchmarking
+# install.packages("microbenchmark")
+
 if (!require(rTRNG)) {
   devtools::install_github("miraisolutions/rTRNG",
                            dependencies = TRUE)
+  # install.packages("devtools")
   library(rTRNG)
 }
-if (!require(dplyr)) { # portfolio manipulation
-  install.packages("dplyr")
-  library(dplyr)
-}
+
 Rcpp::sourceCpp("code/simulationKernel.cpp") # rTRNG/RcppParallel C++ code
 source("code/simulationKernel.R") # R wrapper
 source("code/ES99.R") # utility for Expected Shortfall 99% calculation
@@ -126,10 +129,6 @@ ContrES99_jBBBwi <- colMeans(L_jBBBtailwi)
 
 ### Benchmarks
 ```{r benchSetup, results="hide", message=FALSE}
-if (!(require(microbenchmark))) {
-  install.packages("microbenchmark")
-  library(microbenchmark)
-}
 # reduce to a reasonable size for benchmarking
 M <- pmin(1000, M)
 J <- pmin(600, J)
