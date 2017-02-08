@@ -30,6 +30,8 @@ source("code/ES99.R") # utility for Expected Shortfall 99% calculation
 ```
 
 
+
+
 ### Data load
 ```{r data}
 # load pf, r, Z
@@ -52,6 +54,7 @@ timer <- function(...) {
   system.time(...)["elapsed"]
 }
 ```
+
 
 ### Full simulation by rating
 ```{r full}
@@ -135,7 +138,7 @@ Z <- Z[1:M, 1:J]
 r <- r[1:M, 1:J]
 pf <- pf[1:J, ]
 # number of repetitions
-nBench <- 1
+nBench <- 10
 
 ```
 
