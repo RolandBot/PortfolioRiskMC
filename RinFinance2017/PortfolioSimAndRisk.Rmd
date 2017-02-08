@@ -14,6 +14,7 @@ output:
 knitr::opts_chunk$set(echo = TRUE, collapse = TRUE)
 ```
 
+
 ### Packages and sources
 ```{r codebase, results="hide", message=FALSE}
 if (!require(rTRNG)) {
@@ -29,8 +30,6 @@ Rcpp::sourceCpp("code/simulationKernel.cpp") # rTRNG/RcppParallel C++ code
 source("code/simulationKernel.R") # R wrapper
 source("code/ES99.R") # utility for Expected Shortfall 99% calculation
 ```
-
-
 
 
 ### Data load
@@ -202,6 +201,7 @@ mb <- microbenchmark(withSubMK(M*K/2^0),
                      times = nBench)
 boxplot(mb, unit = "s")
 ```
+
 
 ### Source code
 
